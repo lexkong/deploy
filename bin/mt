@@ -1,0 +1,21 @@
+#!/bin/bash
+
+[ ! -d /vol/s1xenimage ] && mkdir -p /vol/s1xenimage
+mount |grep "/vol/s1xenimage" &>/dev/null;
+if [ "$?" -ne 0 ];then
+    mount 10.66.90.121:/vol/s1xenimage /vol/s1xenimage &>/dev/null
+    [ "$?" -eq 0 ] && echo mount /vol/s1xenimage successfully || 
+    echo mount /vol/s1xenimage failed
+else
+    echo 10.66.90.121:/vol/s1xenimage already mounted
+fi
+
+[ ! -d /vol/S1/iso ] && mkdir -p /vol/S1/iso
+mount |grep "/vol/S1/iso" &>/dev/null;
+if [ "$?" -ne 0 ];then
+    mount 10.66.90.128:/vol/S1/iso /vol/S1/iso
+    [ "$?" -eq 0 ] && echo mount /vol/S1/iso successfully || 
+    echo mount /vol/S1/iso failed
+else
+    echo 10.66.90.128:/vol/S1/iso /vol/S1/iso already mounted
+fi

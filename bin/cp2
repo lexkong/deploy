@@ -1,0 +1,39 @@
+#!/bin/bash
+trap 'exit_fun' 2
+
+usage(){
+        echo "Usage: `basename $0` \"src file\" \"dst file\""
+        exit 1
+}
+
+exit_fun(){
+        echo -e "\033[?25h"
+        kill -9 $(ps -ef|awk '/ [c]p /{print $2}') &>/dev/null
+        exit 1
+}
+
+[ "$#" -ne "2" ] && usage
+[ -d "$2" ] && k=${2%%/}/`basename $1` || k=$2
+
+fromsize=`ls -Ls $1|cut -d" " -f1`
+cp "$1" "$k" &
+start=`date +%s`
+sleep 0.2
+echo -ne "\033[?25l"
+while :;do
+        tosize=`ls -Ls $k|cut -d" " -f1`
+        x=`echo "$tosize $fromsize"|awk '{print int($1*100/$2)}'`
+        [ $x -eq 99 ] && x=100
+        echo -n "["
+        for((i=0;i<x;i=$i+2));do echo -n "=";done
+        echo -n ">"
+        for((j=i;j<=99;j=$j+2));do echo -n " ";done
+        now=$[`date +%s` - $start]
+        [ $now -eq 0 ] && now=1
+        avg=$[$tosize/$now/1024]
+        printf "]  %4s%%  %4sM/s" $i $avg
+        [ $x -ge 100 ] && break
+        sleep 0.1
+        echo -ne "\r"
+done
+echo -e "\033[?25h"

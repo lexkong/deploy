@@ -1,0 +1,449 @@
+#!/bin/bash
+
+: << EOF
+Description: This shell script is used to deploy your linux work environment.
+Author: Alex
+Email: 466701708@qq.com
+Date: 2013-08-21
+
+How to use this script:
+1. [remote machine]#ssh-keygen
+2. [local machine]#ssh-keygen  do this step if you have not generate a .ssh directory in you home dir.
+3. [local machine]#ssh-copy-id -id ~/.ssh/id_rsa.pub username@ipaddress
+4. cd ConfigOwnEnv
+5. ./ConfigOwnEnv.sh username@ipaddress
+6. Warning: You can only deploy for root user on target host currently
+EOF
+
+###You only need to configure DeDir & HostCom ###
+#Define the root directory of the De tool.
+INSTALL_DIR="/usr/local/src"
+BIN_DIR="$HOME/bin"
+[ ! -d $BIN_DIR ] && mkdir -p $BIN_DIR
+
+BASE_NAME=$(basename $(ls -1d $INSTALL_DIR/deploy*))
+
+DeDir="$INSTALL_DIR/$BASE_NAME"
+export COWPATH=$DeDir/bin
+HostCom=$BIN_DIR/tsh
+#define colors
+cyan='\033[36m';normal='\033[0m';red='\033[31m';magenta='\033[35m';yellow='\033[33m';white='\033[37m';green='\033[32m'
+##################################################
+echo "$*" | grep -w "\-v" &>/dev/null && DEBUG="yes" || DEBUG=""
+
+EDITOR=${EDITOR:="vim"}
+JUG=0
+
+#Get variables from testenv.ini
+[ ! -f $HOME/.testenv.ini ] && cp $DeDir/testenv.ini $HOME/.testenv.ini
+source $HOME/.testenv.ini
+DATA_DIR="/var/lib/$BASE_NAME/$tester"
+
+#define test case
+test_case="$guest_type"-"$guest_version"-"$guest_bit"-1
+hvm_cfg=hvm-"$guest_version"-"$guest_bit"-1
+pv_cfg=pv-"$guest_version"-"$guest_bit"-1
+
+HostIP1="$1"
+HostIP2="$1"
+
+opts="h"
+declare dict=(a b c d e f g h i g)
+declare dict2=(1 2 3 4 5 6 7 8 9)
+
+function Usage()
+{
+    cat << EOF
+    deploy [-edcouh]
+    -e(edit): edit testenv.ini, testenv.ini is a configure file which used to configure your environment.
+    -d(deploy): depoly your env on the host, hosts are specified in testenv.ini.
+    -c(check): check key-value, key-value are specified in testenv.ini
+    -u(undeploy): undeploy your env on the host, this will restore the env on the host.(Use -U for no static ip)
+    -U:         Only undeploy the specified host
+    -h(help): print this help message
+    -o "host ip": only deploy the host you specify, others will not change.(no static ip)
+    -O temp configure a machine
+    -v Enter verbose model
+    -s(set): yes/no, enable/disalbe cowsay,need root permission, system config, just for fun
+    install: install deploy tool
+
+EOF
+}
+
+
+#Check for target host
+function CheckSSH()
+{
+    echo -ne ${yellow}"Checking ssh key for host: $1" ......${normal}
+    UI=root@"$1"
+    /usr/bin/expect << EOF > /dev/null
+    set timeout 30
+    spawn ssh $UI
+
+    expect {
+    "*yes*"
+    {
+        exit 1
+    }
+
+    "*assword*"
+    {
+        exit 1
+    }
+
+    "*#*" {exit 0}
+    eof {exit 2}
+}
+EOF
+    JUG="$?"
+    [ $JUG -eq 2 ] && eval sed -i '/$1/d' $HOME/.ssh/known_hosts &> /dev/null
+    echo -e ${cyan} done${normal}
+    return "$JUG"
+}
+
+#make sure you have configured ssh key and generated login command before you deploy your env.
+function CheckBefore()
+{
+    [ ! -f "$2" ] && echo -e "${red}Pls edit testenv.ini and deploy your env first(login command not found)$normal" && return 1
+    
+    CheckSSH $1
+    if [ "$?" -ne 0 ];then
+        echo -e "${red}Pls configure your ssh key for $1 first$normal"
+        return 1
+    else
+        return 0
+    fi
+}
+
+function configssh()
+{
+    UI=root@"$1"
+
+    CheckSSH $1
+    [ "$JUG" != "0" ] && {
+    eval sed -i '/$1/d' $HOME/.ssh/known_hosts &> /dev/null
+    echo -ne ${white}"Generate ssh key for host: $1" ......${normal}
+    /usr/bin/expect << EOF > /dev/null
+#    cat << EOF > /tmp/aa.sh
+set timeout 10
+set password $2
+
+spawn ssh-copy-id $UI
+expect {
+    "*yes*"
+        {
+            send "yes\r"
+            expect eof {exit}
+            expect "*assword*"
+            send "\$password\r"
+            exp_continue
+        }
+
+    "*assword*"
+       {
+            send "\$password\r" 
+            exp_continue
+       }
+}
+
+EOF
+    echo -e ${cyan} done${normal}
+}
+}
+
+#deploy the environment per host
+function Nodedeploy()
+{
+    #printf "%s %s\n" $$ "deploy Node $1 ...... "
+    #username@ipaddress
+    UI="root@$1"
+    Host=$1
+
+    #If the target machine already have deployed, then, return;
+    [ "$(ssh $UI "[ -f ~/.deploy.lock.$tester ] && echo 1")" == "1" ] && {
+    echo -e $red"$UI have already deployed, ignore."$normal
+
+    #But still chang PS1 for that machine
+    ssh $UI "sed -i "/PS1/s/-[0-9a-z]/$2/" ~/.bashrc"
+    ssh $UI "sed -i "/PS1/s/-[0-9a-z]/$2/" ~/.profile"
+    return 0
+    }
+    echo -e ${cyan}Begin to deploy host: $Host ......${normal}
+
+    #Prepare environment
+    [ "$DEBUG" ] && printf "Prepare environment on host: %s ......" $Host
+    ssh "$UI" "[ ! -d $DATA_DIR/bin ] && mkdir -p $DATA_DIR/bin;[ ! -d $DATA_DIR/$guest_version ] && mkdir -p $DATA_DIR/$guest_version;ln -s $DATA_DIR/$guest_version ~/$tester;[ ! -d /vol/s1xenimage ] && mkdir -p /vol/s1xenimage;mount 10.66.90.121:/vol/s1xenimage /vol/s1xenimage/ &>/dev/null;[ ! -d /vol/S1/iso ] && mkdir -p /vol/S1/iso;mount 10.66.90.128:/vol/S1/iso /vol/S1/iso/; touch ~/.deploy.lock.$tester"
+    [ "$DEBUG" ] && printf " done\n"
+
+    #upload customized file
+    #rsync --suffix=.$tester -qbae ssh $DeDir/bashrc "$UI":~/.bashrc
+    #rsync --suffix=.$tester -qbae ssh $DeDir/emacs "$UI":~/.emacs
+    #rsync --suffix=.$tester -qbae ssh $DeDir/vimrc "$UI":~/.vimrc
+    #cp -f $DeDir/conf/.bashrc $DeDir/conf/.profile
+    for F in $(ls -A $DeDir/conf/)
+    do
+        [ "$DEBUG" ] && printf "Upload conf/%s to %s:~/......" $F $Host
+        rsync --suffix=.$tester -qLbae ssh $DeDir/conf/$F "$UI":~/ > /dev/null
+        [ "$DEBUG" ] && printf " done\n"
+    done
+
+    #Concel this feature: deploy your environment for guest
+    #printf "Upload deploy tool to %s:~/$tester/ ......" $Host
+    #rsync -qae ssh $DeDir "$UI":~/$tester/
+    #printf " done\n"
+
+    #printf "Upload testenv.ini to %s:%s/testenv.ini ......" $Host $DATA_DIR
+    #rsync -qae ssh $DeDir/testenv.ini "$UI":$DATA_DIR/testenv.ini
+    #printf " done\n"
+
+
+    [ "$DEBUG" ] && printf "Upload bin/* to %s:%s/bin/ ......" $Host $DATA_DIR
+    rsync -qae ssh $DeDir/bin/* "$UI":$DATA_DIR/bin/
+    [ "$DEBUG" ] && printf " done\n"
+
+    [ "$DEBUG" ] && printf "Upload hvm-example.cfg to %s:%s/%s.cfg ......" $Host $DATA_DIR/$guest_version ${hvm_cfg}
+    rsync -qae ssh $DeDir/testfile/hvm-example.cfg "$UI":$DATA_DIR/$guest_version/${hvm_cfg}.cfg
+    [ "$DEBUG" ] && printf " done\n"
+
+    [ "$DEBUG" ] && printf "Upload pv-example.cfg to %s:%s/%s.cfg ......" $Host $DATA_DIR/$guest_version ${pv_cfg}
+    rsync -qae ssh $DeDir/testfile/pv-example.cfg "$UI":$DATA_DIR/$guest_version/${pv_cfg}.cfg
+    [ "$DEBUG" ] && printf " done\n"
+
+    [ "$DEBUG" ] && printf "Upload virsh-kvm.xml to %s:%s/ ......" $Host $DATA_DIR/$guest_version
+    rsync -qae ssh $DeDir/testfile/virsh-kvm.xml "$UI":$DATA_DIR/$guest_version/
+    [ "$DEBUG" ] && printf " done\n"
+
+    [ "$cowsay" == "no" ] && ssh -n "$UI" "mv -f $DATA_DIR/bin/cowsay2 $DATA_DIR/bin/cowsay"
+
+    #deal the file
+    #sed -i 's/INSTEAD/$BASE_NAME\/$tester/g' ~/.profile;sed -i 's/INSTEAD/$BASE_NAME\/$tester/g' ~/.bashrc
+    [ "$DEBUG" ] && printf "Deal with file %s & %s & ~/.bashrc & ~/.profile ......" $hvm_cfg.cfg $pv_cfg.cfg
+    ssh -n "$UI" "sed -i 's/INSTESTER/$tester/g' ~/.profile;sed -i 's/INSTESTER/$tester/g' ~/.bashrc;sed -i 's/hvm-example/$hvm_cfg/g' $DATA_DIR/$guest_version/${hvm_cfg}.cfg; sed -i 's/pv-example/$pv_cfg/g' $DATA_DIR/$guest_version/${pv_cfg}.cfg;sed -i '/PS1/s/-[0-9a-z]/$2/' ~/.bashrc;sed -i '/PS1/s/-[0-9a-z]/$2/' ~/.profile;cd $DATA_DIR/bin/;$DATA_DIR/bin/logview -a;$DATA_DIR/bin/logview $DATA_DIR/bin/awk.example -f /var/log/xen/xend-debug.log -f /var/log/xen/xen-hotplug.log -f /var/log/xen/xend.log -s 4s errorlog.log --notice=all &>/dev/null &"
+    [ "$DEBUG" ] && printf " done\n"
+
+    echo -e ${cyan}End to deploy host $Host${normal}
+}
+
+function NodeUndeploy()
+{
+    #username@ipaddress
+    UI="root@$1"
+
+    echo -e ${cyan}Begin to undeploy host $1 ......${normal}
+
+
+    rmstr=""
+    for F in $(ls -A $DeDir/conf/)
+    do
+        str="${str}""rm -f ~/$F;"
+    done
+    
+    #printf "rm -rf ~/$tester & ${str} & umount /vol/s1xenimage/ & umount /vol/S1/iso/ & revert %s:~/*.$tester ......\n" $1
+    [ "$DEBUG" ] && echo -n "unlink ~/$tester & umount /vol/s1xenimage/ & umount /vol/S1/iso/ & revert $1:~/*.$tester & rm -rf $DATA_DIR ......"
+    #ssh "$UI" "${str}rename .$tester '' .*.$tester &>/dev/null; rename .$tester '' ~/.ssh/*.$tester; umount /vol/s1xenimage/ &>/dev/null; umount /vol/S1/iso/ &>/dev/null;rm -rf ~/.deploy.lock;killall logview &>/dev/null;rm -rf $DATA_DIR;unlink ~/$tester"
+    ssh "$UI" "rename .$tester '' .*.$tester &>/dev/null;umount /vol/s1xenimage/ &>/dev/null; umount /vol/S1/iso/ &>/dev/null;rm -rf ~/.deploy.lock;killall logview &>/dev/null;rm -rf $DATA_DIR;unlink ~/$tester &>/dev/null"
+
+    [ "$DEBUG" ] && echo " done"
+    #printf "rm -f %s ......" $HostCom
+    #rm -f $HostCom
+    #printf "done\n"
+
+    echo -e ${cyan}End to undeploy host $1${normal}
+}
+
+#Check the version of the host & guest & xen,key=value are defined in the $DeDir/testenv.ini if the key have no value, then it will not be checked.
+function CheckKey()
+{
+    UI=root@"$1"
+    echo -e ${cyan}Begin to check host $1 ......${normal}
+
+    echo -e "#!/bin/bash\n\n" > /tmp/CheckKey.tmp
+    cat $DeDir/testenv.ini >> /tmp/CheckKey.tmp
+    cat $DeDir/CheckKey.sh >> /tmp/CheckKey.tmp
+    echo >> /tmp/CheckKey.tmp
+    chmod 755 /tmp/CheckKey.tmp
+
+    printf "Upload CheckKey.sh to %s:/tmp/ ......" $Host
+    rsync -qae ssh /tmp/CheckKey.tmp "$UI":/tmp/CheckKey.sh
+    printf " done\n"
+
+    printf "execute /tmp/CheckKey.sh & show check result:\n"
+    echo -e $red
+    ssh "$UI" "/tmp/CheckKey.sh"
+    echo -e $normal
+    #printf "done\n"
+
+    echo -e ${cyan}End to check host $1${normal}
+}
+
+#generate host command
+function GenHostCom()
+{
+
+    echo -ne Generate $HostCom ......
+
+    cat /dev/null > $HostCom
+    cat << EOF >> $HostCom
+#!/bin/bash
+
+while getopts OPTS opt
+do
+    case \$opt in 
+EOF
+
+    i=0
+    HelpStr=""
+    for host in "${staticip[@]}"
+    do
+        opt=${dict2[i]}
+        opts=$opts$opt
+        cat << EOF >> $HostCom
+        $opt)  ssh -Y root@$host
+        ;;
+EOF
+        HelpStr="$HelpStr""             echo $opt: root@$host \"->host-$opt\"\n"
+        ((i++))
+    done
+        
+    i=0
+    for host in "${ip[@]}"
+    do
+        opt=${dict[i]}
+        opts=$opts$opt 
+
+        cat << EOF >> $HostCom
+        $opt)  ssh -Y root@$host
+        ;;
+EOF
+        HelpStr="$HelpStr""             echo $opt: root@$host \"->host-$opt\"\n"
+        ((i++))
+    done
+    cat << EOF >> $HostCom
+        h)
+            $(echo -e "         $HelpStr")
+            ;;
+        *) echo "command error, pls check the parameter"
+            exit 1
+            ;;
+    esac
+done
+EOF
+
+    eval sed -i 's/OPTS/$opts/g' $HostCom
+
+    chmod 755 $HostCom
+    echo -e " done"
+}
+
+
+[ $# -eq 0 ] && Usage
+
+#Check host environment
+[ ! -f $HOME/.ssh/id_rsa.pub ] && {
+    echo -e $red"Please generate your public key first, use ssh-keygen to generate."$normal
+    exit
+}
+
+#Start
+while getopts edvcuUhso:O: opt
+do
+    case $opt in 
+        e) $EDITOR $HOME/.testenv.ini
+            ;;
+        d)
+            GenHostCom
+            i=0;fip=""
+            for host in "${staticip[@]}"
+            do
+                [ "$fip" == "" ] && fip=$host
+                opt=${dict2[i]}
+                configssh $host $password
+                Nodedeploy "$host" "-$opt"
+                ((i++))
+            done
+
+            i=0;fip=""
+            for host in "${ip[@]}"
+            do
+                [ "$fip" == "" ] && fip=$host
+                opt=${dict[i]}
+                configssh $host $password
+                Nodedeploy "$host" "-$opt"
+                ((i++))
+            done
+            echo
+            echo -e ${magenta}You can use \"tsh\" "command" to login the host. "\n"eg: tsh -a to login $fip${normal} | cowsay -n -e ".."
+            echo
+            tsh -h
+            ;;
+        c) 
+            for host in "${ip[@]}"
+            do
+                CheckBefore $host $HostCom
+                [ "$?" -ne 0 ] && continue
+                CheckKey "$host"
+            done
+            ;;
+        u)
+            for host in "${ip[@]}"
+            do
+                CheckBefore $host $HostCom
+                [ "$?" -ne 0 ] && continue
+                NodeUndeploy "$host"
+            done
+            ;;
+        o)
+           len=${#ip[*]} 
+           ((len++))
+           ip[len]="$2"
+           opt=${dict[len]}
+           GenHostCom
+           configssh $host $password
+           Nodedeploy "$2" "-$opt"
+           echo
+           echo -e ${magenta}You can use \"tsh\" "command" to login the host. "\n"eg: tsh -a to login $fip${normal} | cowsay -n -e ".."
+           echo
+           tsh -h
+           ;;
+       O)
+            cat << EOF > $BIN_DIR/ts
+            #!/bin/bash
+            ssh -Y root@$2
+EOF
+            chmod +x $BIN_DIR/ts
+            host="$2"
+            configssh $host $password
+            Nodedeploy "$2" ""
+            echo
+            echo -e ${magenta}You can use \"ts\" "command" to login $2${normal} | cowsay -n -e ".."
+            ;;
+        U)
+            CheckBefore "$2" $HostCom
+            [ "$?" -ne 0 ] && exit
+            NodeUndeploy "$2"
+            eval sed -i '/$2/d' $HostCom
+            ;;
+        s)
+            [ "$(whoami)" != "root" ] && {
+                echo "You must have root permission to config cowsay!" | 
+                cowsay -n -e "OO"
+                exit
+            }
+
+            if [ "$2" == "yes" ];then
+                cp -f $DeDir/bin/cowsay /usr/local/bin/cowsay
+            elif [ "$2" == "no" ];then
+                cp -f $DeDir/bin/cowsay2 /usr/local/bin/cowsay
+            else
+                echo "ERROR: no such value - only yes/no" | cowsay -n -d
+            fi
+            ;;
+        h) Usage
+            ;;
+        v) :
+            ;;
+        *)
+            Usage
+            ;;
+    esac
+done

@@ -1,0 +1,64 @@
+#!/bin/bash
+#chrhel 6.5
+BASE_DIR=$(basename $(ls -1d /var/lib/deploy*))
+DATA_DIR="/var/lib/$BASE_DIR"/$TESTER
+yellow='\033[33m';normal='\033[0m';cyan='\033[36m';red='\033[31m'
+
+function Usage()
+{
+    cat << EOF
+    cg [chad] branch
+    -h: print this help message
+    branch: which branch you want to swith
+    -c: show current branch
+    -a: show all the branch
+    -d: delete a branch
+EOF
+}
+current_branch=$(ls -1ld $HOME/$TESTER |awk -F'/' '{print $NF}')
+if [ "$#" -eq 0 ];then
+    Usage
+elif [ "$1" == "-h" ];then
+    Usage
+elif [ "$1" == "-d" -a "$2" != "" ];then
+    until [ -z "$2" ]
+    do
+        [ "$current_branch" == "$2" ] && {
+            echo -e "${red}Can not delete branch ${normal}${cyan}${current_branch}${normal}${red}, you are now on branch${normal} ${cyan}${current_branch}${normal}" |
+            cowsay -n -d
+            shift
+            continue
+        }
+        rm -rf "$DATA_DIR/$2"
+        shift
+    done
+elif [ "$1" == "-d" -a "$2" == "" ];then
+    Usage
+elif [ "$1" == "-c" ];then
+    echo $current_branch #| cowsay -n -e ".."
+elif [ "$1" == "-a" ];then
+    ls -1 $DATA_DIR |egrep -v 'bin|testenv.ini' #| cowsay -n -e ".."
+else
+    branch="$1"
+    [ ! -d $DATA_DIR/$branch ] && {
+        mkdir -p $DATA_DIR/$branch
+
+        for var in $(ls -1 $DATA_DIR/$current_branch/{pv,hvm}-$current_branch-*-1.cfg)
+        do
+            BASE_NAME=$(basename $(echo "$var"))
+
+            TYPE=$(echo $BASE_NAME|cut -d'-' -f1)
+            ARCH=$(echo $BASE_NAME|cut -d'-' -f3)
+            cp -f $var $DATA_DIR/$branch/$TYPE-$branch-$ARCH-1.cfg
+            eval sed -i 's/$TYPE-$current_branch-$ARCH-1/$TYPE-$branch-$ARCH-1/g' $DATA_DIR/$branch/$TYPE-$branch-$ARCH-1.cfg
+
+            #Change mac address
+            eval sed -i '/vif/s/mac=..:..:..:..:..:../mac=$(macgen)/' $DATA_DIR/$branch/$TYPE-$branch-$ARCH-1.cfg
+        done
+        cp $DATA_DIR/$current_branch/virsh-kvm.xml  $DATA_DIR/$branch/
+    }
+    unlink $HOME/$TESTER &>/dev/null
+    ln -s $DATA_DIR/$branch $HOME/$TESTER
+    cd $HOME/$TESTER
+    echo -e ${yellow}"You are now on branch${normal} ${cyan}$branch"${normal} | cowsay -n -e ".."
+fi

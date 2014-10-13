@@ -1,0 +1,18 @@
+#!/bin/bash
+
+yellow='\033[33m';normal='\033[0m';cyan='\033[36m';red='\033[31m'
+
+if [ "$1" == "error" ];then
+    echo -e ${red}"ERROR/FAILED messages in /var/log/xen/*"${normal}
+
+    if [ "$(ls /var/log/xen/* 2>/dev/null)" != "" ];then
+        cat /var/log/xen/* |egrep -i 'error|failed'
+    fi
+
+    echo -e ${red}"ERROR/FAILED messages from 'xm dmesg'"${normal}
+    xm dmesg | egrep -i 'error|failed'
+else
+    rm -rf /var/log/xen/*
+    xm dmesg -c
+fi
+

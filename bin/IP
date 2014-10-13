@@ -1,0 +1,3 @@
+#!/bin/bash
+ifconfig|grep inet|grep -Ev "inet6|127.0.0.1|192.168"|sed 's/inet addr://' |
+cowsay -n -e ".."

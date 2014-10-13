@@ -1,0 +1,997 @@
+#!/bin/bash - 
+
+########################################################################
+# Copyright (c) Alex, 2013; All Rights Reserved                        #
+#                                                                      #
+# LICENSE                                                              #
+# GNU GPL, see the license file for details                            #
+#                                                                      # 
+# CONTACT                                                              #
+# lkong@redhat.com                                                     #
+#                                                                      #
+# For more information, please read README & man logview & logview -h   #
+######################################################################## 
+
+#set -o nounset                              # Treat unset variables as an error
+
+#future function
+swatch()
+{
+    :
+}
+
+#trap signal 1 2 3 15
+#trap 'kill -9 $BG_PID;echo;exit 2' 1 2 3 15
+usage()
+{
+    cat << EOF
+Usage $0 OPTION
+Check system information
+
+OPTIONS:
+    -h Print this help message
+    system, Check information related to system
+    xen, Check infomation related to xen
+    libguestfs, Check information related to libguestfs
+    log, Check system log file failed/error
+
+
+Reprot bugs to <lkong@redhat.com>.
+EOF
+}
+
+function trap_exit
+{
+	tput cnorm
+	clear
+	kill -9 $BG_PID
+}
+trap 'trap_exit;exit 2' 1 2 3 15 #catch singal 1 2 3 15
+
+#define global variables
+global_variables()
+{
+    DISK_SPEED_INIT=150
+    TITLE="False"
+
+    #system date and time
+    DATE=$(date +%F)
+    TIME=$(date +%T)
+    TIME_ZONE=$(date -R | awk '{print $NF}')
+
+    [ -f "$HOME/.testenv.ini" ] && source $HOME/.testenv.ini
+
+    tput init 							#open tput
+    BOLD=`tput bold` 					#bold 
+    B_LINK=`tput blink` 				#blink
+    REV=`tput rev`   					
+    NORMAL=`tput sgr0` 					#normal cursor
+    CURSOR_OFF="tput civis" 			#hide cursor
+    CURSOR_ON="tput cnorm"  			#cursor visible
+    TPUT_RED=`echo -e "\e[40;31m"` 		#red
+    P_COL=`tput cols` 				    #get screen columns
+    P_ROW=`tput lines` 				    #get screen rows
+    HOLD_C=`expr $P_COL - 1`
+    HOLD_R=${P_ROW} 
+    STRLEN=$(echo "$HOLD_C - 26" | bc)
+
+    #format the error string
+    OUT_PUT_ERROR="${BOLD}${TPUT_RED}${B_LINK}* ${NORMAL}${BOLD}${TPUT_RED}"
+
+    #the following three variable is used to print the progress bar
+    TPUTSTART=1
+    TPUTTOTAL=1
+    TPUTEVEL=1
+    CLEAR="False"
+}
+
+#define global variables
+global_variables
+
+#print the progress bar, future function
+bars ()
+{
+    stty -echo >/dev/null 2>&1
+    i=0
+    b=''
+    while true
+    do
+        ((i+=2))
+        echo -ne "\e[${HOLD_R};30HChecking---"
+        #	if [ $i -gt 100 ];then
+        #		continue
+        #	else
+        printf "Progress:[%-50s]%d%%\r" $b $i
+        #fi
+        sleep 1.1
+        b=#$b
+    done
+    stty echo
+    echo
+}	# ----------  end of function BARS  ----------
+
+#highlight function, future function
+colour ()
+{
+    #background_front
+    case $1 in
+        black_red)
+            echo -e "\e[40;31m"
+            ;;
+
+        black_green)
+            echo -e "\e[40;32m"
+            ;;
+
+        black_yellow)
+            echo -e "\e[40;33m"
+            ;;
+
+    esac    # --- end of case ---
+
+}	# ----------  end of function colour  ----------
+
+
+#deal the error string
+deal()
+{
+#    [ $TPUTSTART -eq 1 ] && {
+#    tput cup $((P_ROW - 3)) $TPUTSTART
+#    printf "Checking "
+#    TPUTSTART=$((TPUTSTART + 10))
+#}
+
+#tput cup $((P_ROW - 3)) $TPUTSTART
+#for ((i=1; i <= TPUTEVEL; i++))
+#do
+#    printf "#"
+#done
+
+#TPUTSTART=$((TPUTSTART + TPUTEVEL))
+[ "$2" == "False" ] && {
+OUTPUT_NAME="$OUTPUT_NAME
+$1"
+return 0
+}
+
+[ "$2" == "" ] && {
+OUTPUT_NAME="$OUTPUT_NAME
+$1"
+
+#eval "$3"="${BOLD}${TPUT_RED}${B_LINK}1123132 ${NORMAL}${BOLD}${TPUT_RED}N/A"
+eval "$3"='"\033[1m\033[31m\033[5m* \033[0m\033[1m\033[31mN/A\033[0m"'
+return 0
+}
+
+    TMP_VAL="$2"
+    TMP_NAME="$1"
+
+    strlen=${#2}
+    val_jug=$(echo "$strlen / $STRLEN" | bc)
+    name_jug=$(($(echo "$2" | wc -l) + val_jug -1))
+
+    [ $val_jug -gt 0 ] && {
+        TMP_VAL="$(
+        echo "$TMP_VAL"| awk -v val_jug=$val_jug -v len=$STRLEN '{
+            start = 1;
+            for (i=0; i<=val_jug; i++)
+               { 
+                    print substr($0, start, len);
+                    start = start + len
+               }       
+       }')"
+    }
+
+    [ $name_jug -gt 0 ] && TMP_NAME="$TMP_NAME$(
+        echo | awk -v name_jug=$name_jug '{
+                for (i=0; i<name_jug;i++)
+                   {       
+                     print "\n ";
+               }       
+              }'      
+    )"
+    [ "${TMP_VAL}" == "" ] && TMP_VAL=" "
+    eval "$3"='$TMP_VAL'
+
+    OUTPUT_NAME="$OUTPUT_NAME
+$TMP_NAME"
+}
+
+colorerror()
+{
+    if [ "$(echo "$1" | awk '$0~/N\/A/{print 0}')" == "0" ];then
+        return
+    fi
+    eval "$2"='"\033[1m\033[31m\033[5m$1\033[0m"'
+}
+
+#--- print the menu ---
+#print strings at tput cup x y
+xy()
+{
+	_R=$1 #row
+	_C=$2 #column
+	_TEXT="$3"
+	tput cup $_R $_C
+	echo -en "$_TEXT"
+} 
+
+center() 
+{   
+	_STR=$2 #string
+	_ROW=$3
+    keylen=$4
+	LEN=`echo $_STR | wc -c`
+	COLS=`tput cols` #column number
+	HOLD_COL=`expr $COLS - $LEN`
+	case $1 in
+		all)
+		#NEW_COL=`expr $HOLD_COL / 2`
+        NEW_COL=$HOLD_C
+		;;
+
+		system)
+        NEW_COL=$(echo "$P_COL / 2 - 11" | bc)
+		;;
+
+		value)
+        NEW_COL=$(echo "($HOLD_C - $keylen - 4)/2 + $keylen + 4 - 2" | bc)
+		;;
+
+		middle)
+        NEW_COL=$((keylen + 3))
+		;;
+
+	esac  
+	tput cup $_ROW $NEW_COL
+	echo -n $_STR
+}
+
+#print "<<system information>>"
+print_title()
+{
+    colour black_green
+    center "system" "${BOLD}<<System Information>>${NORMAL}" 0
+    xy 1 1 "Date:$DATE"
+    xy 1 20 "Time:${TIME}"
+
+}
+
+grepstr()
+{
+    grepstr="$(
+    cat "$1" 2>/dev/null | awk '
+    BEGIN {
+        failed=0
+        error=0
+        warning=0
+    }
+
+    {
+        lower=tolower($0);
+        if (match(lower, /failed/))
+        {
+            failed += 1;
+        }
+        
+        if (match(lower, /error/))
+        {
+            error += 1;
+        }
+
+        if (match(lower, /warning/))
+        {
+            warning += 1;
+        }
+    }
+
+    END {
+        print failed":"error":"warning;
+    }
+    '
+    )"
+
+    failed=$(echo "$grepstr" | cut -d':' -f1)
+    error=$(echo "$grepstr" | cut -d':' -f2)
+    warning=$(echo "$grepstr" | cut -d':' -f3)
+    
+    [ ${failed} -ne 0 ] && failed="${OUT_PUT_ERROR}${failed} failed${NORMAL}" ||
+    failed="${failed} failed"
+    [ ${error} -ne 0 ] && error="${OUT_PUT_ERROR}${error} error${NORMAL}" ||
+    error="${error} error"
+    [ ${warning} -ne 0 ] && warning="${OUT_PUT_ERROR}${warning} warning${NORMAL}" ||
+    warning="${warning} warning"
+
+    echo "$failed, $error, $warning"
+}
+
+#check the log files
+log()
+{
+#Program start
+OUTPUT_NAME=""
+OUTPUT_VAL=""
+[ "$TITLE" == "True" ] && start_line=0 || start_line=2
+
+eval ${CURSOR_OFF}
+[ "$CLEAR" == "False" ] && {
+    clear
+    CLEAR="True"
+}
+
+#start function bars
+#bars & 
+#BG_PID=$!
+TPUTTOTAL=8
+TPUTEVEL=$(echo "($P_COL - 20)/ $TPUTTOTAL" | bc)
+
+#get system information, notice, only on parameter
+dmesg=$(grepstr /var/log/dmesg)
+deal "dmesg" "False"
+
+messages=$(grepstr /var/log/messages)
+deal "messages" "False"
+
+anaconda=$(grepstr /var/log/anaconda.log)
+deal "anaconda" "False"
+
+boot=$(grepstr /var/log/boot.log)
+deal "boot.log" "False"
+
+xend_debug="$(grepstr /var/log/xen/xend-debug.log)"
+deal "xen/xend-debug.log" "False"
+
+xen_hotplug=$(grepstr /var/log/xen/xen-hotplug.log)
+deal "xen/xen-hotplug.log" "False"
+
+xend=$(grepstr /var/log/xen/xend.log)
+deal "xen/xend.log" "False"
+
+xm dmesg > /tmp/xm_dmesg.log
+xm_dmesg=$(grepstr /tmp/xm_dmesg.log)
+deal "xm dmesg" "False"
+
+qemu_dm_log="$(ls -1t /var/log/xen/qemu-dm.*.log 2>/dev/null|head -1)"
+qemu_dm_log=${qemu_dm_log:="qemu-dm.log"}
+qemu_dm=$(grepstr "$qemu_dm_log")
+deal "xen/$(basename "$qemu_dm_log")" "False"
+#echo -n " [100%]"
+
+#kill function bars
+#kill -9 $BG_PID >/dev/null
+eval ${CURSOR_ON}
+
+#create table
+tput clear
+
+[ "$TITLE" == "False" ] && print_title && TITLE="True"
+
+KEYLEN=$(
+echo "$OUTPUT_NAME" | awk '
+BEGIN {
+    maxlen=0;
+}
+
+{
+    len=length($0);
+    if (len >= maxlen)
+    {
+        maxlen = len;
+    }
+}
+
+END {
+    print maxlen;
+}
+'
+)
+
+#print the first ---
+xy $start_line 0 "-"
+for ((i=2;i<${HOLD_C}+2;i++));do
+	printf "%s" -
+done
+
+#print the first |
+for ((i=start_line+1;i<=${HOLD_R} - 2;i++));do
+	printf "|"
+	printf "\n"
+done
+
+#print the middle |
+for ((i=start_line+1;i<${HOLD_R} - 2;i++));do
+	center "all" "|" $i
+	center "middle" "|" "$i" "$KEYLEN"
+done
+
+#print Key and Value
+colour black_yellow
+xy $((start_line+1)) $(echo "($KEYLEN + 4) / 2 - 6" | bc) "${BOLD}Key(/var/log/)"
+center "value" "${BOLD}Value${NORMAL}" $((start_line+1)) "$KEYLEN"
+
+#print the second ---
+xy $((start_line+2)) 0 "-"
+for ((i=2;i<${HOLD_C}+2;i++));do
+	printf "%s" -
+done
+
+#Value
+OUTPUT_VAR="${dmesg}
+${messages}
+${anaconda}
+${boot}
+${xend_debug}
+${xen_hotplug}
+${xend}
+${xm_dmesg}
+${qemu_dm}"
+
+#output the Key
+_x=$((start_line+3))
+OIFS="$IFS"
+IFS=$'\n'
+for S_NAME in ${OUTPUT_NAME};do
+	_y=2
+	xy $_x $_y "${S_NAME}"
+	((_x++))
+done
+
+OLD_IFS="$OIFS"
+IFS=$'\x0A'
+
+#output the Value
+_xx=$((start_line+3))
+for S_VAR in ${OUTPUT_VAR};do
+    if echo "$S_VAR" |egrep ^[0-9] &>/dev/null;then
+        _yy=$((KEYLEN + 4 + 2))
+    else
+	    _yy=$((KEYLEN + 4))
+    fi
+	xy $_xx $_yy "${S_VAR}"
+	((_xx++))
+done
+IFS=$OLD_IFS
+
+#print the last ---
+xy $((HOLD_R-2)) 0 "-"
+for ((i=2;i<${HOLD_C} + 2;i++));do
+	printf "%s" -
+done
+printf "\n"
+}
+
+
+system()
+{
+
+#Program start
+OUTPUT_NAME=""
+OUTPUT_VAL=""
+[ "$TITLE" == "True" ] && start_line=0 || start_line=2
+
+eval ${CURSOR_OFF}
+[ "$CLEAR" == "False" ] && {
+    clear
+    CLEAR="True"
+}
+#start function bars
+#bars & 
+#BG_PID=$!
+TPUTTOTAL=11
+TPUTEVEL=$(echo "($P_COL - 20)/ $TPUTTOTAL" | bc)
+
+#get system information
+Product_Name="$(dmidecode | grep "Product Name"|awk -F':' 'NR==1{gsub(/^[[:blank:]]*/, "", $NF);print $NF }')"
+deal "Product Name" "$Product_Name" "Product_Name"
+
+Host_Name=$(uname -n)
+deal "Host Name" "$Host_Name" "Host_Name"
+
+Host_Release=$(cat /etc/issue|head -1)
+deal "Host Release" "$Host_Release" "Host_Release"
+echo "$Host_Release" | grep "$host_release" &>/dev/null || Host_Release="${OUT_PUT_ERROR}${Host_Release}${NORMAL}"
+
+Host_Arch=$(uname -i)
+deal "Host_Arch" "$Host_Release" "Host_Release"
+if [[ "${Host_Arch}" != "${host_arch}" ]];then
+    Host_Arch="${OUT_PUT_ERROR}${Host_Arch}${NORMAL}"
+fi
+
+Host_Kernel_Version=$(uname -r)
+deal "Host Kernel Version" "$Host_Kernel_Version" "Host_Kernel_Version"
+if [[ "${Host_Kernel_Version}" != "${host_kernel_version}" ]];then
+    Host_Kernel_Version="${OUT_PUT_ERROR}${Host_Kernel_Version}${NORMAL}"
+fi
+
+CPU_Type=$(cat /proc/cpuinfo|grep "name" | uniq -c|cut -d':' -f2|awk '{print $1}' | column -t)
+deal "CPU Type" "$CPU_Type" "CPU_Type"
+echo "$CPU_Type"|grep -i "$cpu_type" &>/dev/null|| CPU_Type="${OUT_PUT_ERROR}${CPU_Type}${NORMAL}"
+
+CPU_Core_Number=$(cat /proc/cpuinfo|grep "processor" | wc -l)
+deal "CPU Core Number" "$CPU_Core_Number" "CPU_Core_Number"
+
+CPU_Physical_Number=$(cat /proc/cpuinfo|grep "physical id"|sort|uniq|wc -l)
+deal "CPU Physical Number" "$CPU_Physical_Number" "CPU_Physical_Number"
+
+CPU_Clock_Speed=$(cat /proc/cpuinfo|grep "MHz"|uniq|awk -F: '{print $2"MHZ"}'|column -t)
+deal "CPU Clock Speed" "$CPU_Clock_Speed" "CPU_Clock_Speed"
+
+Memory_Size=$(free -m|grep -i "mem"|awk '{print $2"MB"}')
+deal "Memory Size" "$Memory_Size" "Memory_Size"
+
+Disk_Size="$(fdisk -l |grep :|awk '/\/dev\/sd[a-z]/{print $2,$3"G"}')"
+deal "Disk Size" "$Disk_Size" "Disk_Size"
+
+Swap_Size=$(free -m | grep -i "swap" | awk '{print $2"MB"}')
+deal "Swap Size" "$Swap_Size" "Swap_Size"
+
+NIC_Number=$(ifconfig -a|egrep ^eth|wc -l)
+deal "NIC Number" "$NIC_Number" "NIC_Number"
+
+IP_Address=""
+ping -c 1 8.8.8.8 &>/dev/null || IP_Address="${OUT_PUT_ERROR}Network is unavailable${NORMAL}"
+
+[ "$IP_Address" == "" ] && {
+    for eth in $(ifconfig -a|egrep ^eth|awk '{print $1}')
+    do
+        IP="$(ifconfig "$eth"|grep "inet " |awk -F'[ :]+' '{print $4}')"
+        [ "$IP" != "" ] && {
+            IP_Address="$IP"
+            break
+        }
+   done
+}
+deal "IP Address" "$IP_Address" "IP_Address"
+
+if (service iptables status |grep INPUT 2>&1 1>/dev/null) ; then
+    Firewall_Status="iptables on"
+else
+    Firewall_Status="iptables off"
+fi
+deal "Firewall Status" "$Firewall_Status" "Firewall_Status"
+
+Selinux_Status=$(cat /etc/selinux/config | grep "SELINUX=" | grep -v "^#" | cut -d= -f2)
+deal "Selinux Status" "$Selinux_Status" "Selinux_Status"
+
+#echo -n " [100%]"
+
+#kill function bars
+#kill -9 $BG_PID >/dev/null
+eval ${CURSOR_ON}
+
+#create table
+tput clear
+
+[ "$TITLE" == "False" ] && print_title && TITLE="True"
+
+KEYLEN=$(
+echo "$OUTPUT_NAME" | awk '
+BEGIN {
+    maxlen=0;
+}
+
+{
+    len=length($0);
+    if (len >= maxlen)
+    {
+        maxlen = len;
+    }
+}
+
+END {
+    print maxlen;
+}
+'
+)
+
+#print the first ---
+xy $start_line 0 "-"
+for ((i=2;i<${HOLD_C}+2;i++));do
+	printf "%s" -
+done
+
+#print the first |
+for ((i=start_line+1;i<=${HOLD_R} - 2;i++));do
+	printf "|"
+	printf "\n"
+done
+
+#print the middle |
+for ((i=start_line+1;i<${HOLD_R} - 2;i++));do
+	center "all" "|" $i
+	center "middle" "|" "$i" "$KEYLEN"
+done
+
+#print Key and Value
+colour black_yellow
+xy $((start_line+1)) $(echo "($KEYLEN + 4) / 2 - 1" | bc) "${BOLD}Key"
+center "value" "${BOLD}Value${NORMAL}" $((start_line+1)) "$KEYLEN"
+
+#print the second ---
+xy $((start_line+2)) 0 "-"
+for ((i=2;i<${HOLD_C}+2;i++));do
+	printf "%s" -
+done
+
+#Value
+OUTPUT_VAR="${Product_Name}
+${Host_Name}
+${Host_Release}
+${Host_Kernel_Version}
+${Host_Arch}
+${CPU_Type}
+${CPU_Physical_Number}
+${CPU_Core_Number}
+${CPU_Clock_Speed}
+${Memory_Size}
+${Disk_Size}
+${Swap_Size}
+${NIC_Number}
+${IP_Address}
+${Firewall_Status}
+${Selinux_Status}"
+
+#${Disk_Status}
+
+#output the Key
+_x=$((start_line+3))
+OIFS="$IFS"
+IFS=$'\n'
+for S_NAME in ${OUTPUT_NAME};do
+	_y=2
+	xy $_x $_y "${S_NAME}"
+	((_x++))
+done
+
+OLD_IFS="$OIFS"
+IFS=$'\x0A'
+
+#output the Value
+_xx=$((start_line+3))
+for S_VAR in ${OUTPUT_VAR};do
+    echo "$S_VAR" >> bcde
+    if echo "$S_VAR" |grep "* " &>/dev/null;then
+        _yy=$((KEYLEN + 4))
+    else
+	    _yy=$((KEYLEN + 4 + 2))
+    fi
+	xy $_xx $_yy "${S_VAR}"
+	((_xx++))
+done
+IFS=$OLD_IFS
+
+#print the last ---
+xy $((HOLD_R-2)) 0 "-"
+for ((i=2;i<${HOLD_C} + 2;i++));do
+	printf "%s" -
+done
+printf "\n"
+}
+
+xen()
+{
+#Program start
+OUTPUT_NAME=""
+OUTPUT_VAL=""
+[ "$TITLE" == "True" ] && start_line=0 || start_line=2
+
+eval ${CURSOR_OFF}
+[ "$CLEAR" == "False" ] && {
+    clear
+    CLEAR="True"
+}
+#start function bars
+#bars & 
+#BG_PID=$!
+TPUTTOTAL=1
+TPUTEVEL=$(echo "($P_COL - 20)/ $TPUTTOTAL" | bc)
+
+#get system information
+Xen_Version=$(rpm -qa|grep ^xen-[0-9])
+deal "Xen Version" "$Xen_Version" "Xen_Version"
+if [[ "${Xen_Version}" != "${Xen_version}" ]];then
+    colorerror "$Xen_Version" "Xen_Version"
+fi
+
+Xend_Status="$(service xend status 2>&1)"
+deal "Xend Status" "$Xend_Status" "Xend_Status"
+[ "$Xend_Status" != "xend is running" ] && 
+colorerror "$Xend_Status" "Xend_Status"
+
+if cat /proc/cpuinfo|egrep 'vmx|svm' &>/dev/null;then
+    Full_Virtualization="Support"
+    deal "Full Virtualization" "$Full_Virtualization" "Full_Virtualization"
+else
+    Full_Virtualization="Not support"
+    deal "Full Virtualization" "$Full_Virtualization" "Full_Virtualization"
+    colorerror "$Full_Virtualization" "Full_Virtualization"
+fi
+
+#Check If mount xenimage and iso.
+if mount |grep "10.66.90.121:/vol/s1xenimage" &>/dev/null;then
+    S1_Xen_Image="10.66.90.121:/vol/s1xenimage has mounted"
+    deal "S1 Xen Image" "$S1_Xen_Image" "S1_Xen_Image"
+else
+    S1_Xen_Image="10.66.90.121:/vol/s1xenimage not mounted"
+    deal "S1 Xen Image" "$S1_Xen_Image" "S1_Xen_Image"
+    colorerror "$S1_Xen_Image" "S1_Xen_Image"
+fi
+
+if mount | grep "10.66.90.128:/vol/S1/iso" &>/dev/null;then
+    S1_Iso="10.66.90.128:/vol/S1/iso/ has mounted"
+    deal "S1 Iso" "$S1_Iso" "S1_Iso"
+else
+    S1_Iso="10.66.90.128:/vol/S1/iso not mounted"
+    deal "S1 Iso" "$S1_Iso" "S1_Iso"
+    colorerror "$S1_Iso" "S1_Iso"
+fi
+
+
+#echo -n " [100%]"
+
+#kill function bars
+#kill -9 $BG_PID >/dev/null
+eval ${CURSOR_ON}
+
+#Value
+OUTPUT_VAR="${Xen_Version}
+${Xend_Status}
+${Full_Virtualization}
+${S1_Xen_Image}
+${S1_Iso}"
+
+#create table
+tput clear
+
+[ "$TITLE" == "False" ] && print_title && TITLE="True"
+
+KEYLEN=$(
+echo "$OUTPUT_NAME" | awk '
+BEGIN {
+    maxlen=0;
+}
+
+{
+    len=length($0);
+    if (len >= maxlen)
+    {
+        maxlen = len;
+    }
+}
+
+END {
+    print maxlen;
+}
+'
+)
+
+#print the first ---
+xy $start_line 0 "-"
+for ((i=2;i<${HOLD_C}+2;i++));do
+	printf "%s" -
+done
+
+#print the first |
+for ((i=start_line+1;i<=${HOLD_R} - 2;i++));do
+	printf "|"
+	printf "\n"
+done
+
+#print the middle |
+for ((i=start_line+1;i<${HOLD_R} - 2;i++));do
+	center "all" "|" $i
+	center "middle" "|" "$i" "$KEYLEN"
+done
+
+#print Key and Value
+colour black_yellow
+xy $((start_line+1)) $(echo "($KEYLEN + 4) / 2 - 1" | bc) "${BOLD}Key"
+center "value" "${BOLD}Value${NORMAL}" $((start_line+1)) "$KEYLEN"
+
+#print the second ---
+xy $((start_line+2)) 0 "-"
+for ((i=2;i<${HOLD_C}+2;i++));do
+	printf "%s" -
+done
+
+
+#output the Key
+_x=$((start_line+3))
+OIFS="$IFS"
+IFS=$'\n'
+for S_NAME in ${OUTPUT_NAME};do
+	_y=2
+	xy $_x $_y "${S_NAME}"
+	((_x++))
+done
+
+OLD_IFS="$OIFS"
+IFS=$'\x0A'
+
+#output the Value
+_xx=$((start_line+3))
+for S_VAR in ${OUTPUT_VAR};do
+    if echo "$S_VAR" |grep "* " &>/dev/null;then
+        _yy=$((KEYLEN + 4))
+    else
+	    _yy=$((KEYLEN + 4 + 2))
+    fi
+	xy $_xx $_yy "${S_VAR}"
+	((_xx++))
+done
+IFS=$OLD_IFS
+
+#print the last ---
+xy $((HOLD_R-2)) 0 "-"
+for ((i=2;i<${HOLD_C} + 2;i++));do
+	printf "%s" -
+done
+printf "\n"
+}
+
+
+guestfs()
+{
+#Program start
+OUTPUT_NAME=""
+OUTPUT_VAL=""
+[ "$TITLE" == "True" ] && start_line=0 || start_line=2
+
+eval ${CURSOR_OFF}
+clear
+#start function bars
+#bars & 
+#BG_PID=$!
+TPUTTOTAL=1
+TPUTEVEL=$(echo "($P_COL - 20)/ $TPUTTOTAL" | bc)
+
+#get system information
+Libguestfs_Version=$(rpm -qa|grep libguestfs-[0-9])
+deal "Libguestfs Version" "$Libguestfs_Version" "Libguestfs_Version"
+
+Libguestfs_Tools_Version=$(rpm -qa|grep libguestfs-tools-[0-9])
+deal "Libguestfs Tools Version" "$Libguestfs_Tools_Version" "Libguestfs_Tools_Version"
+
+Libguestfs_Tools_C_Version=$(rpm -qa|grep libguestfs-tools-c-[0-9])
+deal "Libguestfs Tools C Version" "$Libguestfs_Tools_C_Version" "Libguestfs_Tools_C_Version"
+
+Perl_Sys_Guestfs_Version=$(rpm -qa|grep perl-Sys-Guestfs-[0-9])
+deal "Perl Sys Guestfs Version" "$Perl_Sys_Guestfs_Version" "Perl_Sys_Guestfs_Version"
+
+Supermin_Version=$(rpm -qa|grep supermin-[0-9])
+deal "Supermin Version" "$Supermin_Version" "Supermin_Version"
+
+Augeas_Version=$(rpm -qa|grep augeas-[0-9])
+deal "Augeas Version" "$Augeas_Version" "Augeas_Version"
+
+Hivex_Version=$(rpm -qa|grep ^hivex-[0-9])
+deal "Hivex Version" "$Hivex_Version" "Hivex_Version"
+
+Libguestfs_Winsupport_Version=$(rpm -qa|grep libguestfs-winsupport-[0-9])
+deal "Libguestfs Winsupport Version" "$Libguestfs_Winsupport_Version" "Libguestfs_Winsupport_Version"
+
+qemu_kvm_Version=$(rpm -qa|grep qemu-kvm-[0-9])
+deal "qemu-kvm Version" "$qemu_kvm_Version" "qemu_kvm_Version"
+
+libvirt_Version=$(rpm -qa|grep libvirt-[0-9])
+deal "libvirt Version" "$libvirt_Version" "libvirt_Version"
+
+#echo -n " [100%]"
+
+#kill function bars
+#kill -9 $BG_PID >/dev/null
+eval ${CURSOR_ON}
+
+#Value
+OUTPUT_VAR="${Libguestfs_Version}
+${Libguestfs_Tools_Version}
+${Libguestfs_Tools_C_Version}
+${Perl_Sys_Guestfs_Version}
+${Supermin_Version}
+${Augeas_Version}
+${Hivex_Version}
+${Libguestfs_Winsupport_Version}
+${qemu_kvm_Version}
+${libvirt_Version}"
+
+#create table
+tput clear
+
+[ "$TITLE" == "False" ] && print_title && TITLE="True"
+
+KEYLEN=$(
+echo "$OUTPUT_NAME" | awk '
+BEGIN {
+    maxlen=0;
+}
+
+{
+    len=length($0);
+    if (len >= maxlen)
+    {
+        maxlen = len;
+    }
+}
+
+END {
+    print maxlen;
+}
+'
+)
+
+#print the first ---
+xy $start_line 0 "-"
+for ((i=2;i<${HOLD_C}+2;i++));do
+	printf "%s" -
+done
+
+#print the first |
+for ((i=start_line+1;i<=${HOLD_R} - 2;i++));do
+	printf "|"
+	printf "\n"
+done
+
+#print the middle |
+for ((i=start_line+1;i<${HOLD_R} - 2;i++));do
+	center "all" "|" $i
+	center "middle" "|" "$i" "$KEYLEN"
+done
+
+#print Key and Value
+colour black_yellow
+xy $((start_line+1)) $(echo "($KEYLEN + 4) / 2 - 1" | bc) "${BOLD}Key"
+center "value" "${BOLD}Value${NORMAL}" $((start_line+1)) "$KEYLEN"
+
+#print the second ---
+xy $((start_line+2)) 0 "-"
+for ((i=2;i<${HOLD_C}+2;i++));do
+	printf "%s" -
+done
+
+
+#output the Key
+_x=$((start_line+3))
+OIFS="$IFS"
+IFS=$'\n'
+for S_NAME in ${OUTPUT_NAME};do
+	_y=2
+	xy $_x $_y "${S_NAME}"
+	((_x++))
+done
+
+OLD_IFS="$OIFS"
+IFS=$'\x0A'
+
+#output the Value
+_xx=$((start_line+3))
+for S_VAR in ${OUTPUT_VAR};do
+    if echo "$S_VAR" |grep "* " &>/dev/null;then
+        _yy=$((KEYLEN + 4))
+    else
+	    _yy=$((KEYLEN + 4 + 2))
+    fi
+	xy $_xx $_yy "${S_VAR}"
+	((_xx++))
+done
+IFS=$OLD_IFS
+
+#print the last ---
+xy $((HOLD_R-2)) 0 "-"
+for ((i=2;i<${HOLD_C} + 2;i++));do
+	printf "%s" -
+done
+printf "\n"
+}
+
+
+#script start
+[ "$1" == "-h" ] && {
+usage
+exit 0
+}
+
+com=("$*")
+for command in ${com[*]}
+do
+    eval "$command"
+done

@@ -1,0 +1,16 @@
+#!/bin/bash
+#This script is used to get the xm's configure file from autotest DEBUG log.
+cut -d'|' -f3 "$1"|awk '{gsub(/^[[:blank:]]*/,"",$0);print $0}' |
+awk '{gsub(/[[:blank:]]*/,"",$0);print $0}' |
+awk -F'=' -v OFS="=" '{
+if (match($1, /kernel|vnclisten|serial|uuid|on_reboot|on_poweroff|on_crash|soundhw|name|device_model|builder|bootloader/))
+    {
+        $2="\""$2"\""
+        print $0
+    }
+else
+    {
+        print $0
+    }
+}
+'

@@ -1,0 +1,27 @@
+#!/bin/bash
+
+#clone hvm-7.0-64-1.cfg
+
+function create_image_file()
+{
+    test_case="$(echo $1 | sed 's/.cfg//')"
+    base_name=$(echo $test_case|cut -d'-' -f1)-$(echo $test_case|cut -d'-' -f2)-$(echo $test_case|cut -d'-' -f3)
+
+    old_version=$(echo "$test_case"|cut -d'-' -f4)
+    new_version=$((old_version + 1))
+    new_case="$base_name"-"$new_version"
+
+    eval sed "s/$test_case/$new_case/g" "$test_case".cfg > "$new_case".cfg
+    eval sed -i '/vif/s/mac=..:..:..:..:..:../mac=$(macgen)/' "$new_case".cfg
+    #cp /var/lib/xen/images/"$test_case".img /var/lib/xen/images/"$new_case".img
+}
+
+if [ "$#" -eq 2 -a -f "$2" ];then
+    create_image_file "$1"
+    cp -v "$2" /var/lib/xen/images/"$new_case".img
+elif [ "$#" -eq 2 -a ! -f "$2" ];then
+    echo "ERROR: file $2 does not exist, please check."
+    exit
+else
+    create_image_file "$1"
+fi

@@ -105,7 +105,7 @@ EOF
 function CheckBefore()
 {
     [ ! -f "$2" ] && echo -e "${red}Pls edit testenv.ini and deploy your env first(login command not found)$normal" && return 1
-    
+
     CheckSSH $1
     if [ "$?" -ne 0 ];then
         echo -e "${red}Pls configure your ssh key for $1 first$normal"
@@ -141,7 +141,7 @@ expect {
 
     "*assword*"
        {
-            send "\$password\r" 
+            send "\$password\r"
             exp_continue
        }
 }
@@ -237,7 +237,7 @@ function NodeUndeploy()
     do
         str="${str}""rm -f ~/$F;"
     done
-    
+
     #printf "rm -rf ~/$tester & ${str} & umount /vol/s1xenimage/ & umount /vol/S1/iso/ & revert %s:~/*.$tester ......\n" $1
     [ "$DEBUG" ] && echo -n "unlink ~/$tester & umount /vol/s1xenimage/ & umount /vol/S1/iso/ & revert $1:~/*.$tester & rm -rf $DATA_DIR ......"
     #ssh "$UI" "${str}rename .$tester '' .*.$tester &>/dev/null; rename .$tester '' ~/.ssh/*.$tester; umount /vol/s1xenimage/ &>/dev/null; umount /vol/S1/iso/ &>/dev/null;rm -rf ~/.deploy.lock;killall logview &>/dev/null;rm -rf $DATA_DIR;unlink ~/$tester"
@@ -288,7 +288,7 @@ function GenHostCom()
 
 while getopts OPTS opt
 do
-    case \$opt in 
+    case \$opt in
 EOF
 
     i=0
@@ -298,22 +298,20 @@ EOF
         opt=${dict2[i]}
         opts=$opts$opt
         cat << EOF >> $HostCom
-        $opt)  ssh -Y root@$host
-        ;;
+        $opt)  ssh -Y root@$host ;;
 EOF
         HelpStr="$HelpStr""             echo $opt: root@$host \"->host-$opt\"\n"
         ((i++))
     done
-        
+
     i=0
     for host in "${ip[@]}"
     do
         opt=${dict[i]}
-        opts=$opts$opt 
+        opts=$opts$opt
 
         cat << EOF >> $HostCom
-        $opt)  ssh -Y root@$host
-        ;;
+        $opt)  ssh -Y root@$host ;;
 EOF
         HelpStr="$HelpStr""             echo $opt: root@$host \"->host-$opt\"\n"
         ((i++))
@@ -347,7 +345,7 @@ EOF
 #Start
 while getopts edvcuUhso:O: opt
 do
-    case $opt in 
+    case $opt in
         e) $EDITOR $HOME/.testenv.ini
             ;;
         d)
@@ -376,7 +374,7 @@ do
             echo
             tsh -h
             ;;
-        c) 
+        c)
             for host in "${ip[@]}"
             do
                 CheckBefore $host $HostCom
@@ -393,7 +391,7 @@ do
             done
             ;;
         o)
-           len=${#ip[*]} 
+           len=${#ip[*]}
            ((len++))
            ip[len]="$2"
            opt=${dict[len]}
@@ -425,7 +423,7 @@ EOF
             ;;
         s)
             [ "$(whoami)" != "root" ] && {
-                echo "You must have root permission to config cowsay!" | 
+                echo "You must have root permission to config cowsay!" |
                 cowsay -n -e "OO"
                 exit
             }

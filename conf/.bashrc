@@ -80,21 +80,21 @@ function _xm()
             COMPREPLY=($(compgen -W "$Wordlist2" -- "${word}"))
             ;;
         *block-detach*)
-            [ $(echo "$line" | awk '{print NF}') -ge 3 ] && 
+            [ $(echo "$line" | awk '{print NF}') -ge 3 ] &&
             Wordlist2=$(eval xm block-list $(echo "$line" |awk '{print $3}') |
             awk '$1!~/Vdev/{print $1}') ||
             Wordlist2=$(xm list | sed '1,2d' | awk '{print $1}')
             COMPREPLY=($(compgen -W "$Wordlist2" -- "${word}"))
             ;;
         *network-detach*)
-            [ $(echo "$line" | awk '{print NF}') -ge 3 ] && 
+            [ $(echo "$line" | awk '{print NF}') -ge 3 ] &&
             Wordlist2=$(eval xm network-list $(echo "$line" |awk '{print $3}') |
             awk '$1!~/Idx/{print $1}') ||
             Wordlist2=$(xm list | sed '1,2d' | awk '{print $1}')
             COMPREPLY=($(compgen -W "$Wordlist2" -- "${word}"))
             ;;
         *pci-detach*)
-            [ $(echo "$line" | awk '{print NF}') -ge 3 ] && 
+            [ $(echo "$line" | awk '{print NF}') -ge 3 ] &&
             Wordlist2=$(eval xm pci-list $(echo "$line" |awk '{print $3}') |
             awk '$1!~/VSlt/{print "0000:"$3":"$4"."$5}') ||
             Wordlist2=$(xm list | sed '1,2d' | awk '{print $1}')
@@ -126,3 +126,4 @@ BASE_NAME="$(basename $(ls -1d /var/lib/deploy*))"
 alias cg="source /var/lib/$BASE_NAME/$TESTER/bin/cg"
 export COWPATH=/var/lib/$BASE_NAME/$TESTER/bin/
 export PATH=$PATH:/var/lib/$BASE_NAME/$TESTER/bin:/usr/sbin # Add RVM to PATH for scripting
+export GUESTFISH_OUTPUT='\e[0;33m'

@@ -406,7 +406,7 @@ do
        O)
             cat << EOF > $BIN_DIR/ts
             #!/bin/bash
-            ssh -Y root@$2
+            ssh -XY root@$2
 EOF
             chmod +x $BIN_DIR/ts
             host="$2"
